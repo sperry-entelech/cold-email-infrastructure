@@ -1,0 +1,29 @@
+# Cold Email System Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+pandas>=1.5.0
+requests>=2.28.0
+python-dotenv>=0.19.0
+openai>=0.28.0
+
+# Data processing
+numpy>=1.24.0
+openpyxl>=3.0.0  # For Excel file support
+
+# Logging and utilities
+python-dateutil>=2.8.0
+pytz>=2022.1
+
+# Optional: Database support
+psycopg2-binary>=2.9.0  # PostgreSQL support
+sqlalchemy>=1.4.0
+
+# Optional: Enhanced features
+beautifulsoup4>=4.11.0  # Web scraping if needed
+lxml>=4.9.0
+
+# Development dependencies (optional)
+pytest>=7.0.0
+black>=22.0.0
+flake8>=5.0.0
