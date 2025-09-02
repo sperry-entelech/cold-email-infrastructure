@@ -1,0 +1,331 @@
+{
+  "name": "Claude Icebreaker Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/generate-icebreaker",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "claude-icebreaker"
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "company_name",
+              "value": "={{ $json.company || $json.company_name || '' }}"
+            },
+            {
+              "name": "industry",
+              "value": "={{ $json.industry || '' }}"
+            },
+            {
+              "name": "first_name", 
+              "value": "={{ $json.first_name || '' }}"
+            },
+            {
+              "name": "last_name",
+              "value": "={{ $json.last_name || '' }}"
+            },
+            {
+              "name": "title",
+              "value": "={{ $json.title || '' }}"
+            },
+            {
+              "name": "website",
+              "value": "={{ $json.website || $json.website_url || '' }}"
+            },
+            {
+              "name": "template",
+              "value": "={{ $json.template || 'Love your approach to {specific_observation}, been following {company_name} for a while, big fan of your {service_focus}.' }}"
+            }
+          ]
+        }
+      },
+      "id": "normalize-data",
+      "name": "Normalize Lead Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "requestMethod": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-3-5-sonnet-20241022"
+            },
+            {
+              "name": "max_tokens", 
+              "value": 100
+            },
+            {
+              "name": "temperature",
+              "value": 0.7
+            },
+            {
+              "name": "messages",
+              "value": [
+                {
+                  "role": "user",
+                  "content": "You're an expert at writing personalized cold email icebreakers that convert.\n\nWrite a 1-2 sentence icebreaker for this prospect:\n- Company: {{ $json.company_name }}\n- Industry: {{ $json.industry }}\n- Contact: {{ $json.first_name }} {{ $json.last_name }}\n- Title: {{ $json.title }}\n- Website: {{ $json.website }}\n\nThe icebreaker should:\n1. Sound like I've been casually following their company\n2. Mention something specific about their business (not generic)\n3. Be conversational and genuine (not corporate or salesy)\n4. Focus on their expertise or business approach\n5. Be under 25 words total\n6. Follow this format: \"{{ $json.template }}\"\n\nGenerate ONLY the icebreaker text - no quotes, no explanations, just the personalized line."
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "id": "claude-api-call",
+      "name": "Claude API Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "claude-api-key",
+          "name": "Claude API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.type }}",
+              "operation": "equal",
+              "value2": "error"
+            }
+          ]
+        }
+      },
+      "id": "check-for-error",
+      "name": "Check for Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "icebreaker",
+              "value": "={{ $json.content[0].text.trim().replace(/^[\"']|[\"']$/g, '').replace(/\\.$/, '') }}"
+            },
+            {
+              "name": "company_name",
+              "value": "={{ $('Normalize Lead Data').item.json.company_name }}"
+            },
+            {
+              "name": "status",
+              "value": "success"
+            },
+            {
+              "name": "provider",
+              "value": "claude"
+            },
+            {
+              "name": "model", 
+              "value": "claude-3-5-sonnet-20241022"
+            },
+            {
+              "name": "generated_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "format-success-response",
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "icebreaker",
+              "value": "Impressed by what you're building at {{ $('Normalize Lead Data').item.json.company_name }}, particularly your approach in the {{ $('Normalize Lead Data').item.json.industry || 'business' }} space"
+            },
+            {
+              "name": "company_name",
+              "value": "={{ $('Normalize Lead Data').item.json.company_name }}"
+            },
+            {
+              "name": "status",
+              "value": "fallback"
+            },
+            {
+              "name": "error",
+              "value": "={{ $json.error || 'Claude API error' }}"
+            },
+            {
+              "name": "generated_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "format-fallback-response",
+      "name": "Format Fallback Response", 
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input2"
+      },
+      "id": "merge-responses",
+      "name": "Merge Responses",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Claude API Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude API Call": {
+      "main": [
+        [
+          {
+            "node": "Check for Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for Error": {
+      "main": [
+        [
+          {
+            "node": "Format Fallback Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Fallback Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Responses",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Responses": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "cold-email",
+      "name": "cold-email"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -12,8 +12,20 @@ import logging
 from datetime import datetime
 import os
 from typing import Dict, List, Optional
-import openai
 from dataclasses import dataclass
+
+# AI Provider imports
+try:
+    import anthropic
+    CLAUDE_AVAILABLE = True
+except ImportError:
+    CLAUDE_AVAILABLE = False
+
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
 # Google Sheets imports (optional)
 try:
@@ -22,7 +34,6 @@ try:
     GOOGLE_SHEETS_AVAILABLE = True
 except ImportError:
     GOOGLE_SHEETS_AVAILABLE = False
-    logger.warning("Google Sheets integration not available. Install with: pip install gspread google-auth")
 
 # Configure logging
 logging.basicConfig(
@@ -53,32 +64,94 @@ class ColdEmailProcessor:
     def __init__(self):
         self.setup_credentials()
         self.setup_instantly_client()
-        self.setup_openai_client()
+        self.setup_ai_provider()
         
     def setup_credentials(self):
         """Load API credentials from environment variables"""
+        # AI Provider configuration
+        self.ai_provider = os.getenv('AI_PROVIDER', 'claude').lower()
+        self.claude_api_key = os.getenv('CLAUDE_API_KEY')
+        self.claude_model = os.getenv('CLAUDE_MODEL', 'claude-3-5-sonnet-20241022')
+        
+        # n8n workflow configuration
+        self.n8n_webhook_url = os.getenv('N8N_ICEBREAKER_WEBHOOK_URL')
+        
+        # Azure OpenAI (optional)
         self.azure_openai_key = os.getenv('AZURE_OPENAI_KEY')
         self.azure_openai_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+        self.azure_openai_model = os.getenv('AZURE_OPENAI_MODEL', 'gpt-4')
+        
+        # Instantly (required for sending)
         self.instantly_api_key = os.getenv('INSTANTLY_API_KEY')
         self.instantly_workspace_id = os.getenv('INSTANTLY_WORKSPACE_ID')
         
-        if not all([self.azure_openai_key, self.azure_openai_endpoint, self.instantly_api_key]):
-            raise ValueError("Missing required environment variables. Check .env file.")
+        # Validate required credentials based on AI provider
+        if self.ai_provider == 'claude':
+            if self.n8n_webhook_url:
+                logger.info("Using n8n workflow for Claude icebreaker generation")
+            elif not self.claude_api_key:
+                logger.warning("Neither Claude API key nor n8n webhook configured. AI icebreakers will use fallback templates.")
+                self.ai_provider = 'none'
+        elif self.ai_provider == 'azure_openai' and not all([self.azure_openai_key, self.azure_openai_endpoint]):
+            logger.warning("Azure OpenAI credentials not found. AI icebreakers will use fallback templates.")
+            self.ai_provider = 'none'
     
     def setup_instantly_client(self):
         """Initialize Instantly API client"""
         self.instantly_base_url = "https://api.instantly.ai/api/v1"
-        self.instantly_headers = {
-            "Authorization": f"Bearer {self.instantly_api_key}",
-            "Content-Type": "application/json"
-        }
+        if self.instantly_api_key:
+            self.instantly_headers = {
+                "Authorization": f"Bearer {self.instantly_api_key}",
+                "Content-Type": "application/json"
+            }
+        else:
+            logger.warning("Instantly API key not found. Email sending will be disabled.")
+            self.instantly_headers = {}
     
-    def setup_openai_client(self):
-        """Initialize Azure OpenAI client"""
-        openai.api_type = "azure"
-        openai.api_base = self.azure_openai_endpoint
-        openai.api_version = "2023-12-01-preview"
-        openai.api_key = self.azure_openai_key
+    def setup_ai_provider(self):
+        """Initialize the configured AI provider"""
+        self.claude_client = None
+        self.n8n_client = None
+        
+        if self.ai_provider == 'claude':
+            # Try n8n workflow first, then direct API
+            if self.n8n_webhook_url:
+                try:
+                    from n8n_icebreaker_client import N8nIcebreakerClient
+                    self.n8n_client = N8nIcebreakerClient(self.n8n_webhook_url)
+                    logger.info("n8n Claude workflow client initialized successfully")
+                except Exception as e:
+                    logger.error(f"Failed to initialize n8n client: {e}")
+                    logger.info("Falling back to direct Claude API...")
+            
+            # Direct Claude API (fallback or primary if no n8n)
+            if not self.n8n_client and CLAUDE_AVAILABLE and self.claude_api_key:
+                try:
+                    self.claude_client = anthropic.Anthropic(api_key=self.claude_api_key)
+                    logger.info("Claude API client initialized successfully")
+                except Exception as e:
+                    logger.error(f"Failed to initialize Claude client: {e}")
+                    self.ai_provider = 'none'
+            elif not self.n8n_client and not self.claude_api_key:
+                logger.warning("No Claude configuration available")
+                self.ai_provider = 'none'
+        
+        elif self.ai_provider == 'azure_openai' and OPENAI_AVAILABLE and self.azure_openai_key:
+            try:
+                openai.api_type = "azure"
+                openai.api_base = self.azure_openai_endpoint
+                openai.api_version = "2023-12-01-preview"
+                openai.api_key = self.azure_openai_key
+                logger.info("Azure OpenAI client initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Azure OpenAI client: {e}")
+                self.ai_provider = 'none'
+        
+        elif self.ai_provider != 'none':
+            logger.warning(f"AI provider '{self.ai_provider}' not available or not configured. Using fallback templates.")
+            self.ai_provider = 'none'
+        
+        logger.info(f"AI Provider: {self.ai_provider} (n8n: {bool(self.n8n_client)}, direct: {bool(self.claude_client)})")
     
     def get_column_mapping(self) -> Dict[str, str]:
         """
@@ -303,21 +376,96 @@ class ColdEmailProcessor:
             first_name=lead.first_name
         )
     
-    def generate_ai_icebreaker(self, lead: Lead) -> str:
-        """
-        Generate personalized icebreaker using Azure OpenAI
-        Following Nick's methodology for AI personalization
-        """
-        # Check if icebreaker generation is enabled
-        if not os.getenv('ICEBREAKER_ENABLED', 'true').lower() == 'true':
-            logger.info("AI icebreaker generation disabled, using fallback")
+    def generate_n8n_icebreaker(self, lead: Lead) -> str:
+        """Generate icebreaker using n8n workflow"""
+        if not self.n8n_client:
+            logger.warning("n8n client not available, trying direct Claude API")
+            return self.generate_claude_icebreaker(lead)
+        
+        try:
+            # Convert Lead to n8n client Lead format
+            from n8n_icebreaker_client import Lead as N8nLead
+            n8n_lead = N8nLead(
+                first_name=lead.first_name,
+                last_name=lead.last_name,
+                email=lead.email,
+                company_name=lead.company_name,
+                industry=lead.industry,
+                website=lead.website,
+                title=lead.title
+            )
+            
+            template = self.get_icebreaker_template()
+            result = self.n8n_client.generate_icebreaker(n8n_lead, template)
+            
+            if result.get('status') == 'success':
+                logger.info(f"Generated n8n icebreaker for {lead.company_name}: {result['icebreaker'][:50]}...")
+                return result['icebreaker']
+            elif result.get('status') == 'fallback':
+                logger.warning(f"n8n workflow failed for {lead.company_name}: {result.get('error', 'Unknown error')}")
+                return result['icebreaker']
+            else:
+                logger.error(f"Unexpected n8n response for {lead.company_name}: {result}")
+                return self.get_icebreaker_fallback(lead)
+                
+        except Exception as e:
+            logger.error(f"Error with n8n icebreaker for {lead.company_name}: {e}")
+            return self.generate_claude_icebreaker(lead)
+
+    def generate_claude_icebreaker(self, lead: Lead) -> str:
+        """Generate icebreaker using direct Claude API"""
+        if not self.claude_client:
+            logger.warning("Claude client not available, using fallback")
             return self.get_icebreaker_fallback(lead)
         
-        # Get custom template if configured
         template = self.get_icebreaker_template()
         
-        prompt = f"""
-        Generate a personalized 1-2 sentence icebreaker for a cold email to this prospect:
+        prompt = f"""You're an expert at writing personalized cold email icebreakers that convert. 
+
+Write a 1-2 sentence icebreaker for this prospect:
+- Company: {lead.company_name}
+- Industry: {lead.industry}
+- Contact: {lead.first_name} {lead.last_name}
+- Title: {lead.title}
+- Website: {lead.website}
+
+The icebreaker should:
+1. Sound like I've been casually following their company
+2. Mention something specific about their business (not generic)
+3. Be conversational and genuine (not corporate or salesy)
+4. Focus on their expertise or business approach
+5. Be under 25 words total
+6. Follow this format: "{template}"
+
+Generate ONLY the icebreaker text - no quotes, no explanations, just the personalized line."""
+
+        try:
+            message = self.claude_client.messages.create(
+                model=self.claude_model,
+                max_tokens=100,
+                temperature=0.7,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            icebreaker = message.content[0].text.strip()
+            
+            # Clean up common artifacts
+            icebreaker = icebreaker.strip('"\'')
+            if icebreaker.endswith('.'):
+                icebreaker = icebreaker[:-1]
+            
+            logger.info(f"Generated Claude API icebreaker for {lead.company_name}: {icebreaker[:50]}...")
+            return icebreaker
+            
+        except Exception as e:
+            logger.error(f"Error generating Claude icebreaker for {lead.company_name}: {e}")
+            return self.get_icebreaker_fallback(lead)
+    
+    def generate_openai_icebreaker(self, lead: Lead) -> str:
+        """Generate icebreaker using Azure OpenAI"""
+        template = self.get_icebreaker_template()
+        
+        prompt = f"""Generate a personalized 1-2 sentence icebreaker for a cold email to this prospect:
         
         Company: {lead.company_name}
         Industry: {lead.industry}
@@ -334,15 +482,11 @@ class ColdEmailProcessor:
         6. Follow this general format: "{template}"
         
         Generate ONLY the icebreaker text, no quotes or explanations.
-        Make it specific to this company and industry:
-        """
+        Make it specific to this company and industry:"""
         
         try:
-            # Get model name from config
-            model_name = os.getenv('AZURE_OPENAI_MODEL', 'gpt-4')
-            
             response = openai.ChatCompletion.create(
-                engine=model_name,
+                engine=self.azure_openai_model,
                 messages=[
                     {"role": "system", "content": "You are an expert at writing personalized cold email icebreakers that convert. Focus on being specific and genuine."},
                     {"role": "user", "content": prompt}
@@ -358,12 +502,34 @@ class ColdEmailProcessor:
             if icebreaker.endswith('.'):
                 icebreaker = icebreaker[:-1]
             
-            logger.info(f"Generated icebreaker for {lead.company_name}: {icebreaker[:50]}...")
+            logger.info(f"Generated OpenAI icebreaker for {lead.company_name}: {icebreaker[:50]}...")
             return icebreaker
             
         except Exception as e:
-            logger.error(f"Error generating icebreaker for {lead.company_name}: {e}")
-            # Use configured fallback
+            logger.error(f"Error generating OpenAI icebreaker for {lead.company_name}: {e}")
+            return self.get_icebreaker_fallback(lead)
+
+    def generate_ai_icebreaker(self, lead: Lead) -> str:
+        """
+        Generate personalized icebreaker using configured AI provider
+        Routes to Claude, Azure OpenAI, or fallback templates
+        """
+        # Check if icebreaker generation is enabled
+        if not os.getenv('ICEBREAKER_ENABLED', 'true').lower() == 'true':
+            logger.info("AI icebreaker generation disabled, using fallback")
+            return self.get_icebreaker_fallback(lead)
+        
+        # Route to appropriate AI provider
+        if self.ai_provider == 'claude':
+            # Prefer n8n workflow if available, fallback to direct API
+            if self.n8n_client:
+                return self.generate_n8n_icebreaker(lead)
+            else:
+                return self.generate_claude_icebreaker(lead)
+        elif self.ai_provider == 'azure_openai':
+            return self.generate_openai_icebreaker(lead)
+        else:
+            logger.info(f"No AI provider configured ({self.ai_provider}), using fallback")
             return self.get_icebreaker_fallback(lead)
     
     def test_icebreaker_generation(self, num_tests: int = 3) -> List[str]:

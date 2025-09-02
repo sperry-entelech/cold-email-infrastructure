@@ -5,7 +5,10 @@
 pandas>=1.5.0
 requests>=2.28.0
 python-dotenv>=0.19.0
-openai>=0.28.0
+
+# AI Integration - Multiple providers supported
+anthropic>=0.25.0  # Claude API
+openai>=0.28.0     # Optional: Keep for fallback/alternative
 
 # Data processing
 numpy>=1.24.0
