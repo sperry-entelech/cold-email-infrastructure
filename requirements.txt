@@ -23,6 +23,13 @@ sqlalchemy>=1.4.0
 beautifulsoup4>=4.11.0  # Web scraping if needed
 lxml>=4.9.0
 
+# Google Sheets integration
+google-auth>=2.15.0
+google-auth-oauthlib>=0.7.0
+google-auth-httplib2>=0.1.0
+google-api-python-client>=2.70.0
+gspread>=5.7.0  # Alternative simpler Google Sheets client
+
 # Development dependencies (optional)
 pytest>=7.0.0
 black>=22.0.0

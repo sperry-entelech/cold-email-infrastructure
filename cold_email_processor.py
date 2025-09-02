@@ -15,6 +15,15 @@ from typing import Dict, List, Optional
 import openai
 from dataclasses import dataclass
 
+# Google Sheets imports (optional)
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    GOOGLE_SHEETS_AVAILABLE = True
+except ImportError:
+    GOOGLE_SHEETS_AVAILABLE = False
+    logger.warning("Google Sheets integration not available. Install with: pip install gspread google-auth")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -71,47 +80,242 @@ class ColdEmailProcessor:
         openai.api_version = "2023-12-01-preview"
         openai.api_key = self.azure_openai_key
     
-    def load_findylead_csv(self, csv_path: str) -> List[Lead]:
+    def get_column_mapping(self) -> Dict[str, str]:
         """
-        Load and parse FindyLead CSV export
-        Expected columns: first_name, last_name, email, company_name, industry, website
+        Get column mapping for different data sources (Apollo, FindyLead, etc.)
         """
-        logger.info(f"Loading FindyLead CSV from: {csv_path}")
+        # Default FindyLead mapping
+        mapping = {
+            'first_name': 'first_name',
+            'last_name': 'last_name', 
+            'email': 'email',
+            'company_name': 'company_name',
+            'industry': 'industry',
+            'website': 'website',
+            'title': 'title',
+            'linkedin': 'linkedin'
+        }
+        
+        # Apollo CSV mapping (common column names from Apollo exports)
+        apollo_mapping = {
+            'first_name': os.getenv('APOLLO_CSV_MAPPING_FIRST_NAME', 'first_name'),
+            'last_name': os.getenv('APOLLO_CSV_MAPPING_LAST_NAME', 'last_name'),
+            'email': os.getenv('APOLLO_CSV_MAPPING_EMAIL', 'email'),
+            'company_name': os.getenv('APOLLO_CSV_MAPPING_COMPANY', 'company'),
+            'industry': os.getenv('APOLLO_CSV_MAPPING_INDUSTRY', 'industry'),
+            'website': os.getenv('APOLLO_CSV_MAPPING_WEBSITE', 'website_url'),
+            'title': os.getenv('APOLLO_CSV_MAPPING_TITLE', 'title'),
+            'linkedin': 'linkedin'
+        }
+        
+        # Use Apollo mapping if configured
+        data_source = os.getenv('DEFAULT_DATA_SOURCE', 'csv')
+        if data_source in ['apollo_csv', 'apollo']:
+            mapping.update(apollo_mapping)
+        
+        return mapping
+
+    def detect_csv_columns(self, df: pd.DataFrame) -> Dict[str, str]:
+        """
+        Auto-detect column names in CSV (helpful for Apollo exports)
+        """
+        columns = df.columns.str.lower().tolist()
+        detected_mapping = {}
+        
+        # Common variations for each field
+        field_variations = {
+            'first_name': ['first_name', 'first name', 'firstname', 'fname', 'given_name'],
+            'last_name': ['last_name', 'last name', 'lastname', 'lname', 'family_name', 'surname'],
+            'email': ['email', 'email_address', 'email address', 'e_mail', 'mail'],
+            'company_name': ['company_name', 'company name', 'company', 'organization', 'org'],
+            'industry': ['industry', 'sector', 'vertical', 'business_type'],
+            'website': ['website', 'website_url', 'web_site', 'url', 'domain', 'company_url'],
+            'title': ['title', 'job_title', 'position', 'role', 'job title'],
+            'linkedin': ['linkedin', 'linkedin_url', 'linkedin profile', 'li_profile']
+        }
+        
+        for field, variations in field_variations.items():
+            for variation in variations:
+                if variation in columns:
+                    detected_mapping[field] = variation
+                    break
+        
+        logger.info(f"Auto-detected columns: {detected_mapping}")
+        return detected_mapping
+
+    def load_csv_data(self, csv_path: str) -> List[Lead]:
+        """
+        Load and parse CSV from any source (FindyLead, Apollo, custom export)
+        Auto-detects column names and handles various formats
+        """
+        logger.info(f"Loading CSV data from: {csv_path}")
         
         try:
             df = pd.read_csv(csv_path)
-            leads = []
+            logger.info(f"CSV loaded with {len(df)} rows and columns: {list(df.columns)}")
             
-            for _, row in df.iterrows():
-                lead = Lead(
-                    first_name=str(row.get('first_name', '')).strip(),
-                    last_name=str(row.get('last_name', '')).strip(),
-                    email=str(row.get('email', '')).strip(),
-                    company_name=str(row.get('company_name', '')).strip(),
-                    industry=str(row.get('industry', '')).strip(),
-                    website=str(row.get('website', '')).strip(),
-                    title=str(row.get('title', '')).strip(),
-                    linkedin=str(row.get('linkedin', '')).strip()
-                )
-                
-                # Basic validation
-                if lead.email and lead.company_name and '@' in lead.email:
-                    leads.append(lead)
-                else:
-                    logger.warning(f"Skipping invalid lead: {lead.email}")
-            
-            logger.info(f"Loaded {len(leads)} valid leads from CSV")
-            return leads
+            # Use the common processing logic
+            return self._process_dataframe_to_leads(df)
             
         except Exception as e:
             logger.error(f"Error loading CSV: {e}")
             raise
+    
+    def validate_lead(self, lead: Lead) -> bool:
+        """Validate that a lead has minimum required data"""
+        # Must have email and company name
+        if not lead.email or '@' not in lead.email:
+            return False
+        if not lead.company_name or len(lead.company_name.strip()) < 2:
+            return False
+        # At least one name field should be present
+        if not lead.first_name and not lead.last_name:
+            return False
+        return True
+    
+    def load_google_sheets_data(self, sheet_id: str = None, range_name: str = None) -> List[Lead]:
+        """
+        Load lead data from Google Sheets
+        Requires service account credentials configured in .env
+        """
+        if not GOOGLE_SHEETS_AVAILABLE:
+            raise ImportError("Google Sheets integration not available. Run: pip install gspread google-auth")
+        
+        # Get configuration from environment
+        sheet_id = sheet_id or os.getenv('GOOGLE_SHEETS_ID')
+        range_name = range_name or os.getenv('GOOGLE_SHEETS_RANGE', 'Sheet1!A:Z')
+        service_account_file = os.getenv('GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE')
+        
+        if not sheet_id:
+            raise ValueError("Google Sheets ID not provided. Set GOOGLE_SHEETS_ID in .env or pass as parameter.")
+        
+        if not service_account_file or not os.path.exists(service_account_file):
+            raise ValueError("Google Sheets service account file not found. Check GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE in .env")
+        
+        logger.info(f"Loading data from Google Sheets: {sheet_id}")
+        
+        try:
+            # Set up credentials
+            scopes = [
+                'https://www.googleapis.com/auth/spreadsheets.readonly',
+                'https://www.googleapis.com/auth/drive.readonly'
+            ]
+            
+            creds = Credentials.from_service_account_file(service_account_file, scopes=scopes)
+            client = gspread.authorize(creds)
+            
+            # Open the spreadsheet
+            sheet = client.open_by_key(sheet_id)
+            worksheet = sheet.get_worksheet(0)  # First worksheet
+            
+            # Get all records as list of dictionaries
+            records = worksheet.get_all_records()
+            
+            if not records:
+                raise ValueError("No data found in Google Sheet")
+            
+            logger.info(f"Retrieved {len(records)} rows from Google Sheets")
+            
+            # Convert to DataFrame for consistent processing
+            df = pd.DataFrame(records)
+            
+            # Use the same processing logic as CSV
+            return self._process_dataframe_to_leads(df)
+            
+        except Exception as e:
+            logger.error(f"Error loading Google Sheets data: {e}")
+            raise
+    
+    def _process_dataframe_to_leads(self, df: pd.DataFrame) -> List[Lead]:
+        """
+        Common processing logic for DataFrame (from CSV or Google Sheets)
+        """
+        logger.info(f"Processing DataFrame with {len(df)} rows and columns: {list(df.columns)}")
+        
+        # Get column mapping (from config or auto-detect)
+        mapping = self.get_column_mapping()
+        detected = self.detect_csv_columns(df)
+        
+        # Use detected columns if available, fall back to config mapping
+        final_mapping = {field: detected.get(field, mapping.get(field, '')) for field in mapping.keys()}
+        
+        logger.info(f"Using column mapping: {final_mapping}")
+        
+        leads = []
+        skipped_count = 0
+        
+        for _, row in df.iterrows():
+            try:
+                # Extract data using the mapping
+                lead_data = {}
+                for field, column_name in final_mapping.items():
+                    if column_name and column_name in df.columns:
+                        value = str(row.get(column_name, '')).strip()
+                        # Clean up common data issues
+                        if value.lower() in ['nan', 'none', 'null', '']:
+                            value = ''
+                        lead_data[field] = value
+                
+                lead = Lead(
+                    first_name=lead_data.get('first_name', ''),
+                    last_name=lead_data.get('last_name', ''),
+                    email=lead_data.get('email', ''),
+                    company_name=lead_data.get('company_name', ''),
+                    industry=lead_data.get('industry', ''),
+                    website=lead_data.get('website', ''),
+                    title=lead_data.get('title', ''),
+                    linkedin=lead_data.get('linkedin', '')
+                )
+                
+                # Validate required fields
+                if self.validate_lead(lead):
+                    leads.append(lead)
+                else:
+                    skipped_count += 1
+                    if skipped_count <= 5:  # Only log first few
+                        logger.warning(f"Skipping invalid lead: email='{lead.email}', company='{lead.company_name}'")
+            
+            except Exception as e:
+                logger.warning(f"Error processing row: {e}")
+                skipped_count += 1
+        
+        logger.info(f"Processed {len(leads)} valid leads, skipped {skipped_count} invalid entries")
+        
+        if len(leads) == 0:
+            logger.error("No valid leads found! Check column mapping and data format.")
+            raise ValueError("No valid leads found in data source")
+        
+        return leads
+    
+    def get_icebreaker_template(self) -> str:
+        """Get icebreaker template from configuration"""
+        default_template = "Love your approach to {specific_observation}, been following {company_name} for a while, big fan of your {service_focus}."
+        return os.getenv('ICEBREAKER_TEMPLATE', default_template)
+    
+    def get_icebreaker_fallback(self, lead: Lead) -> str:
+        """Get configured fallback icebreaker"""
+        fallback_template = os.getenv('ICEBREAKER_FALLBACK', 
+            "Impressed by what you're building at {company_name}, particularly your approach in the {industry} space.")
+        
+        return fallback_template.format(
+            company_name=lead.company_name,
+            industry=lead.industry or "business",
+            first_name=lead.first_name
+        )
     
     def generate_ai_icebreaker(self, lead: Lead) -> str:
         """
         Generate personalized icebreaker using Azure OpenAI
         Following Nick's methodology for AI personalization
         """
+        # Check if icebreaker generation is enabled
+        if not os.getenv('ICEBREAKER_ENABLED', 'true').lower() == 'true':
+            logger.info("AI icebreaker generation disabled, using fallback")
+            return self.get_icebreaker_fallback(lead)
+        
+        # Get custom template if configured
+        template = self.get_icebreaker_template()
+        
         prompt = f"""
         Generate a personalized 1-2 sentence icebreaker for a cold email to this prospect:
         
@@ -127,15 +331,18 @@ class ColdEmailProcessor:
         3. Be genuine and conversational (not salesy)
         4. Focus on their expertise or recent growth
         5. Be under 30 words total
+        6. Follow this general format: "{template}"
         
-        Example format: "Love your no-frills approach to [specific service], been following [company] for [timeframe], big fan of how you [specific observation]."
-        
-        Generate ONLY the icebreaker text, no quotes or explanations:
+        Generate ONLY the icebreaker text, no quotes or explanations.
+        Make it specific to this company and industry:
         """
         
         try:
+            # Get model name from config
+            model_name = os.getenv('AZURE_OPENAI_MODEL', 'gpt-4')
+            
             response = openai.ChatCompletion.create(
-                engine="gpt-4",  # Your deployed model name
+                engine=model_name,
                 messages=[
                     {"role": "system", "content": "You are an expert at writing personalized cold email icebreakers that convert. Focus on being specific and genuine."},
                     {"role": "user", "content": prompt}
@@ -145,13 +352,41 @@ class ColdEmailProcessor:
             )
             
             icebreaker = response.choices[0].message.content.strip()
+            
+            # Clean up common AI artifacts
+            icebreaker = icebreaker.strip('"\'')
+            if icebreaker.endswith('.'):
+                icebreaker = icebreaker[:-1]
+            
             logger.info(f"Generated icebreaker for {lead.company_name}: {icebreaker[:50]}...")
             return icebreaker
             
         except Exception as e:
             logger.error(f"Error generating icebreaker for {lead.company_name}: {e}")
-            # Fallback to generic icebreaker
-            return f"Love what you're building at {lead.company_name}, been following your growth in the {lead.industry} space."
+            # Use configured fallback
+            return self.get_icebreaker_fallback(lead)
+    
+    def test_icebreaker_generation(self, num_tests: int = 3) -> List[str]:
+        """Test icebreaker generation with sample data"""
+        test_leads = [
+            Lead("John", "Smith", "john@testcompany.com", "Test Marketing Agency", 
+                 "Marketing", "https://testcompany.com", "CEO", ""),
+            Lead("Jane", "Doe", "jane@consultech.com", "ConsuTech Solutions", 
+                 "Consulting", "https://consultech.com", "Founder", ""),
+            Lead("Bob", "Johnson", "bob@automate.co", "Automate Plus", 
+                 "Automation", "https://automate.co", "CTO", "")
+        ]
+        
+        results = []
+        print(f"\n🧪 Testing icebreaker generation with {num_tests} samples...")
+        
+        for i, lead in enumerate(test_leads[:num_tests]):
+            print(f"\nTest {i+1}: {lead.company_name}")
+            icebreaker = self.generate_ai_icebreaker(lead)
+            print(f"Result: {icebreaker}")
+            results.append(icebreaker)
+        
+        return results
     
     def calculate_lead_score(self, lead: Lead) -> int:
         """
@@ -369,24 +604,64 @@ def main():
     print("🚀 Cold Email Lead Processor - Following Nick's Methodology")
     print("=" * 60)
     
+    # Check for test mode
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == 'test':
+        print("🧪 Running in TEST MODE")
+        try:
+            processor = ColdEmailProcessor()
+            processor.test_icebreaker_generation()
+            return
+        except Exception as e:
+            print(f"❌ Test failed: {e}")
+            return
+    
     # Initialize processor
     try:
         processor = ColdEmailProcessor()
         print("✅ Processor initialized successfully")
     except Exception as e:
         print(f"❌ Error initializing processor: {e}")
+        print("💡 Check your .env file configuration")
         return
     
-    # Load leads from CSV
-    csv_path = input("Enter path to FindyLead CSV file: ").strip()
-    if not csv_path:
-        csv_path = "findylead_export.csv"  # Default filename
+    # Choose data source
+    data_source = os.getenv('DEFAULT_DATA_SOURCE', 'csv')
     
+    print(f"\n📊 Data Source Options:")
+    print("1. CSV File (Apollo/FindyLead/Custom)")
+    print("2. Google Sheets")
+    print("3. Use default from .env")
+    
+    choice = input("Choose data source (1/2/3): ").strip()
+    
+    leads = []
     try:
-        leads = processor.load_findylead_csv(csv_path)
-        print(f"✅ Loaded {len(leads)} leads from CSV")
+        if choice == '2' or (choice == '3' and data_source == 'google_sheets'):
+            # Google Sheets
+            if not GOOGLE_SHEETS_AVAILABLE:
+                print("❌ Google Sheets integration not available. Install with: pip install gspread google-auth")
+                return
+            
+            sheet_id = input("Enter Google Sheets ID (or press Enter for .env default): ").strip()
+            leads = processor.load_google_sheets_data(sheet_id if sheet_id else None)
+            print(f"✅ Loaded {len(leads)} leads from Google Sheets")
+            
+        else:
+            # CSV file (default)
+            csv_path = input("Enter path to CSV file (Apollo/FindyLead/Custom): ").strip()
+            if not csv_path:
+                csv_path = "leads_export.csv"  # Default filename
+            
+            leads = processor.load_csv_data(csv_path)
+            print(f"✅ Loaded {len(leads)} leads from CSV")
+        
+        if leads:
+            print(f"📊 First lead preview: {leads[0].first_name} {leads[0].last_name} - {leads[0].company_name}")
+            
     except Exception as e:
-        print(f"❌ Error loading CSV: {e}")
+        print(f"❌ Error loading data: {e}")
+        print("💡 Check your configuration and data format")
         return
     
     # Confirm processing
