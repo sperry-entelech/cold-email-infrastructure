@@ -544,7 +544,7 @@ Generate ONLY the icebreaker text - no quotes, no explanations, just the persona
         ]
         
         results = []
-        print(f"\n🧪 Testing icebreaker generation with {num_tests} samples...")
+        print(f"\nTesting icebreaker generation with {num_tests} samples...")
         
         for i, lead in enumerate(test_leads[:num_tests]):
             print(f"\nTest {i+1}: {lead.company_name}")
@@ -767,13 +767,13 @@ Next Steps:
 
 def main():
     """Main execution function"""
-    print("🚀 Cold Email Lead Processor - Following Nick's Methodology")
+    print("Cold Email Lead Processor - Following Nick's Methodology")
     print("=" * 60)
     
     # Check for test mode
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'test':
-        print("🧪 Running in TEST MODE")
+        print("Running in TEST MODE")
         try:
             processor = ColdEmailProcessor()
             processor.test_icebreaker_generation()

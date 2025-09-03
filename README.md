@@ -1,5 +1,9 @@
 # Cold Email Automation System
 
+## ⚠️ ARCHITECTURE UPDATE: Migrated from Azure to Direct OpenAI API
+
+**This system has been updated to use direct OpenAI API instead of Azure OpenAI Service, resulting in 30-50% cost savings while maintaining the same functionality.**
+
 **Following Nick's Proven Cold Email Methodology**
 
 Python-based system for automated lead processing, AI personalization, and email campaign management. Processes 2K+ leads and generates consistent meeting bookings.
@@ -9,7 +13,7 @@ Python-based system for automated lead processing, AI personalization, and email
 ## 🎯 What This System Does
 
 - **Processes FindyLead CSV exports** (2K+ leads) with AI personalization
-- **Generates custom icebreakers** using Azure OpenAI following Nick's methodology
+- **Generates custom icebreakers** using OpenAI API (migrated from Azure OpenAI) following Nick's methodology
 - **Manages email campaigns** through Instantly for deliverability and sequences
 - **Monitors performance** and identifies hot leads automatically
 - **Scales from 90 to 300+ emails per day** with multiple mailbox management
@@ -34,7 +38,7 @@ Python-based system for automated lead processing, AI personalization, and email
 - **ZapMail Mailboxes**: $90/month
 - **Pre-warmed Setup**: $150-300 (one-time, skips 21-day warmup)
 - **Instantly Platform**: $67/month
-- **Azure OpenAI**: $30-50/month
+- **OpenAI API**: $20-35/month (reduced from Azure OpenAI)
 - **Domains**: $15/month
 
 **Total Month 1**: $202-222/month + $150-300 setup
@@ -42,7 +46,7 @@ Python-based system for automated lead processing, AI personalization, and email
 ### Month 3 (10 mailboxes, 300 emails/day):
 - **ZapMail**: $300/month
 - **Instantly**: $97/month
-- **Azure OpenAI**: $75/month
+- **OpenAI API**: $50/month (reduced from Azure)
 - **Domains**: $25/month
 
 **Total Month 3**: $497/month
@@ -82,7 +86,7 @@ python email_performance_monitor.py
 
 ### Integration Stack:
 - **FindyLead** → Lead data source (CSV)
-- **Azure OpenAI** → AI personalization engine
+- **OpenAI API** → AI personalization engine (migrated from Azure OpenAI for cost savings)
 - **Instantly** → Email campaign management
 - **ZapMail** → Mailbox infrastructure
 - **Slack** → Hot lead notifications (optional)
@@ -94,7 +98,7 @@ python email_performance_monitor.py
 ### Must Have:
 1. **ZapMail** (zapmail.co) - Mailboxes and deliverability
 2. **Instantly** (instantly.ai) - Email campaigns and sequences
-3. **Azure OpenAI** (portal.azure.com) - AI personalization
+3. **OpenAI API** (platform.openai.com) - AI personalization (direct API, more cost-effective than Azure)
 
 ### Optional:
 4. **Slack** - Hot lead notifications via webhooks

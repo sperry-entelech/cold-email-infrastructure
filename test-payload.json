@@ -1,0 +1,9 @@
+{
+  "company_name": "TechStart Solutions", 
+  "industry": "SaaS",
+  "first_name": "Sarah",
+  "last_name": "Johnson", 
+  "title": "CEO",
+  "website": "https://techstart.com",
+  "template": "Love your approach to {specific_observation}, been following {company_name} for a while, big fan of your {service_focus}."
+}

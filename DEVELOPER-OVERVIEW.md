@@ -1,5 +1,15 @@
 # Developer Overview - Cold Email Automation System
 
+## ⚠️ MIGRATION NOTICE: Azure to Direct OpenAI API
+
+**This system has been migrated from Azure OpenAI to direct OpenAI API for better cost efficiency and simplified setup.**
+
+### Changes:
+- **API Endpoint**: `https://api.openai.com/v1/` (instead of Azure endpoint)
+- **Authentication**: Direct OpenAI API key (no Azure subscription required)
+- **Cost Savings**: 30-50% reduction in AI processing costs
+- **Setup**: Simplified - no Azure account or resource provisioning needed
+
 ## 🎯 What You're Building
 
 A **Python-based cold email automation system** that processes 2K+ leads with AI personalization and manages email campaigns. This replaces manual cold outreach with scalable automation following proven methodologies.
@@ -8,7 +18,7 @@ A **Python-based cold email automation system** that processes 2K+ leads with AI
 
 1. **Install Python 3.8+** from python.org
 2. **Run setup**: `python setup_cold_email_system.py`
-3. **Configure .env** with API keys (Azure OpenAI + Instantly)
+3. **Configure .env** with API keys (OpenAI + Instantly)
 4. **Test with sample data**: `python cold_email_processor.py`
 
 ## 📊 Business Impact
@@ -23,8 +33,8 @@ A **Python-based cold email automation system** that processes 2K+ leads with AI
 ### Month 1 (90 emails/day):
 - ZapMail: $90/month + $150-300 setup
 - Instantly: $67/month  
-- Azure OpenAI: $30-50/month
-- **Total**: ~$187-207/month
+- OpenAI API: $20-35/month (reduced from Azure)
+- **Total**: ~$177-192/month (10-15% savings)
 
 ### Month 3 (300 emails/day):
 - **Total**: ~$497/month
@@ -34,7 +44,7 @@ A **Python-based cold email automation system** that processes 2K+ leads with AI
 
 - **Language**: Python 3.8+
 - **Dependencies**: pandas, requests, openai, python-dotenv
-- **APIs**: Azure OpenAI, Instantly, ZapMail, Slack (optional)
+- **APIs**: OpenAI (direct), Instantly, ZapMail, Slack (optional)
 - **Data**: CSV import → AI processing → Email campaigns
 
 ## 📁 Key Files
@@ -50,7 +60,7 @@ A **Python-based cold email automation system** that processes 2K+ leads with AI
 ### Must Have:
 - **ZapMail** (mailboxes): zapmail.co
 - **Instantly** (campaigns): instantly.ai  
-- **Azure OpenAI** (AI): portal.azure.com
+- **OpenAI API** (AI): platform.openai.com
 
 ### Optional:
 - **Slack** (notifications): slack.com webhooks
@@ -72,7 +82,7 @@ A **Python-based cold email automation system** that processes 2K+ leads with AI
 ## 🚀 Deployment Process
 
 ### Phase 1 (Week 1): Infrastructure
-- Set up service accounts (ZapMail, Instantly, Azure)
+- Set up service accounts (ZapMail, Instantly, OpenAI)
 - Configure domains and email authentication
 - Test system with sample data
 
